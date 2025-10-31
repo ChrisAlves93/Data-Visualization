@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MA Map - Major Assignment 2</title>
+  <script src="./libs/d3.js"></script>
+  <script src="./libs/d3jstopojson.v1.js"></script>
+
+  <style>
+    :root { --bg:#0f1115; --panel:#171922; --ink:#e9edf1; --muted:#9aa4b2; --stroke:#222635; --accent:#6ec5ff; }
+    *{ box-sizing:border-box }
+    html,body{ height:100% }
+    body{
+      margin:0; background:var(--bg); color:var(--ink);
+      font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;
+      display:flex; flex-direction:column; align-items:center;
+    }
+    header{ padding:20px 10px 6px; text-align:center }
+    header h1{ margin:.2rem 0; font-weight:700 }
+    header h3{ margin:.2rem 0; font-weight:500; color:var(--muted) }
+
+    .container{
+      width:min(1100px,95vw);
+      margin:8px auto 36px;
+      display:flex; flex-direction:column; gap:22px; align-items:center;
+    }
+    .card{
+      width:100%; background:var(--panel);
+      border:1px solid var(--stroke); border-radius:16px;
+      padding:14px 14px 10px;
+      display:flex; flex-direction:column; align-items:center;
+      box-shadow:0 8px 24px rgba(0,0,0,.25);
+    }
+    .titleRow{ width:100%; display:flex; justify-content:space-between; align-items:center; margin-bottom:8px }
+    .titleRow h2{ margin:0; font-size:18px }
+    .legend{ display:flex; align-items:center; gap:6px; font-size:12px; color:var(--muted) }
+    .legend .sw{ width:24px; height:10px; border-radius:2px; border:1px solid rgba(255,255,255,.12) }
+    .svgwrap{ width:100%; display:flex; justify-content:center }
+    svg{ width:100%; height:auto; max-height:520px }
+    path.town{ stroke:#1b1f2e; stroke-width:.6px; vector-effect:non-scaling-stroke; transition:opacity .12s, stroke-width .12s }
+    path.town:hover{ opacity:.85 }
+    .hovered{ stroke:#fff; stroke-width:1.2px; filter:drop-shadow(0 0 4px rgba(255,255,255,.35)) }
+
+    /*--------------------------------------------------------*/
+    /*---------------------- Tooltip ------------------------*/
+    /*--------------------------------------------------------*/
+
+    #tooltip{
+      position:fixed; pointer-events:none; z-index:20; display:none;
+      background:#0b0d13; color:var(--ink); border:1px solid var(--stroke);
+      border-radius:12px; padding:10px 12px; min-width:220px; max-width:320px;
+      box-shadow:0 8px 24px rgba(0,0,0,.35);
+    }
+    #tooltip h4{ margin:.1rem 0 .25rem; font-size:14px }
+    #tooltip .meta{ font-size:12px; color:var(--muted); margin-bottom:6px }
+    #tooltip svg{ width:100%; height:120px }
+
+    footer{ color:var(--muted); font-size:12px; margin:10px 0 24px }
+    a{ color:var(--accent) }
+  </style>
+</head>
+
+<body>
+  <header>
+    <h1>Major Assignment 2: Massachusetts Geospatial Visualizations</h1>
+    <h3>Christopher Alves</h3>
+  </header>
+
+  <div class="container">
+    <section class="card" id="cardA">
+      <div class="titleRow">
+        <h2>MAP A: Actual Population in 1980 by towns</h2>
+        <div class="legend" id="legendA"></div>
+      </div>
+      <div class="svgwrap"><svg id="svgA" viewBox="0 0 900 600"></svg></div>
+    </section>
+
+    <section class="card" id="cardB">
+      <div class="titleRow">
+        <h2>MAP B: Population Change (1980 to 2010) by Town</h2>
+        <div class="legend" id="legendB"></div>
+      </div>
+      <div class="svgwrap"><svg id="svgB" viewBox="0 0 900 600"></svg></div>
+    </section>
+
+    <section class="card" id="cardC">
+      <div class="titleRow">
+        <h2>MAP C: Gini Index by County (Hue) - 2019</h2>
+        <div class="legend" id="legendC"></div>
+      </div>
+      <div class="svgwrap"><svg id="svgC" viewBox="0 0 900 600"></svg></div>
+    </section>
+  </div>
+
+  <div id="tooltip">
+    <h4 id="tCounty">County</h4>
+    <div class="meta" id="tMeta"></div>
+    <svg id="tChart" viewBox="0 0 280 120"></svg>
+  </div>
+
+  <footer>CIS 568 - Data Visualization</footer>
+
+  <script>
+
+    /*-------------------------------------------------------*/
+    /*------------------- Window setting --------------------*/
+    /*-------------------------------------------------------*/
+
+    const DATA = { topo:"data/towns.topojson", gini:"data/gini_index.csv" };
+
+    const FIELD_NAMES = {
+      town: ["TOWN","TOWNNAME","NAME","NAME10"],
+      pop1980: ["POP1980","P1980","POP_1980","pop1980"],
+      pop2010: ["POP2010","P2010","POP_2010","pop2010"],
+      countyFips: ["COUNTYFP","COUNTY_FIPS","FIPS_STCO","COUNTYFIPS"]
+    };
+
+    const COUNTY_LIST = [
+      {"county":"Barnstable County","fips":"25001"},
+      {"county":"Berkshire County","fips":"25003"},
+      {"county":"Bristol County","fips":"25005"},
+      {"county":"Dukes County","fips":"25007"},
+      {"county":"Essex County","fips":"25009"},
+      {"county":"Franklin County","fips":"25011"},
+      {"county":"Hampden County","fips":"25013"},
+      {"county":"Hampshire County","fips":"25015"},
+      {"county":"Middlesex County","fips":"25017"},
+      {"county":"Nantucket County","fips":"25019"},
+      {"county":"Norfolk County","fips":"25021"},
+      {"county":"Plymouth County","fips":"25023"},
+      {"county":"Suffolk County","fips":"25025"},
+      {"county":"Worcester County","fips":"25027"}
+    ];
+    const COUNTY_FROM_FIPS = new Map(COUNTY_LIST.map(d => [d.fips, d.county]));
+
+    function pickKey(obj, keys){ return keys.find(k => Object.prototype.hasOwnProperty.call(obj,k)); }
+    function normCountyName(s){ return String(s||"").trim().toLowerCase().replace(/ county$/,""); }
+
+    /*-------------------------------------------------------*/
+    /*------------------- Parallel Load Data ----------------*/
+    /*-------------------------------------------------------*/
+
+    Promise.all([ d3.json(DATA.topo), d3.csv(DATA.gini, d3.autoType) ])
+      .then(([topology, giniRows]) => {
+
+        /*-------------------------------------------------------*/
+        /*-----------------Topojson data handling----------------*/
+        /*-------------------------------------------------------*/
+
+        const objName = (topology.objects && topology.objects.ma) ? "ma" : Object.keys(topology.objects)[0];
+        const geo = topojson.feature(topology, topology.objects[objName]);
+        const proj = d3.geoMercator().fitSize([900,600], geo);
+        const path = d3.geoPath(proj);
+
+        geo.features.forEach(f => {
+          const p = f.properties || {};
+          f.__town = p[pickKey(p, FIELD_NAMES.town)] ?? "(unknown)";
+          f.__p80  = +p[pickKey(p, FIELD_NAMES.pop1980)];
+          f.__p10  = +p[pickKey(p, FIELD_NAMES.pop2010)];
+          f.__d    = (isFinite(f.__p80) && isFinite(f.__p10)) ? (f.__p10 - f.__p80) : NaN;
+          const cf = p[pickKey(p, FIELD_NAMES.countyFips)];
+          f.__cfips = (cf!=null) ? String(cf).padStart(5,"0") : undefined;
+        });
+
+        /* Legend helper */
+        function legend(sel, scale, steps=6, fmt=d=>d, left="", right="", diverging=false){
+          const wrap = d3.select(sel); wrap.selectAll("*").remove();
+          const dom = scale.domain();
+          const a = +dom[0], b = +dom[dom.length-1];
+          const vals = d3.range(steps).map(i => a + (i/(steps-1))*(b-a));
+          vals.forEach(v => wrap.append("div").attr("class","sw").style("background", scale(v)));
+          if (left) wrap.append("span").text(left);
+          if (right) wrap.append("span").text(" · "+right);
+        }
+
+        /*----------------------------------------------------*/
+        /*----------------- Channelling Marks ----------------*/
+        /*----------------------------------------------------*/
+
+        // Map A: Population in 1980
+
+        const svgA = d3.select("#svgA");
+        const popExtent = d3.extent(geo.features, d => d.__p80).filter(Number.isFinite);
+        const colorA = d3.scaleSequentialSqrt(popExtent, d3.interpolateYlGnBu);
+        legend("#legendA", colorA, 6, d => d3.format(".2s")(d), "low", "high");
+
+        svgA.append("g").selectAll("path").data(geo.features).join("path")
+          .attr("class","town").attr("d", path)
+          .attr("fill", d => isFinite(d.__p80) ? colorA(d.__p80) : "#555")
+          .on("mouseenter", function(){ d3.select(this).classed("hovered",true).raise(); })
+          .on("mouseleave", function(){ d3.select(this).classed("hovered",false); })
+          .append("title").text(d => `${d.__town}\nPopulation: ${isFinite(d.__p80)? d3.format(",")(d.__p80) : "N/A"}`);
+
+        
+        // Map B: Population Change 1980 to 2010
+
+        const svgB = d3.select("#svgB");
+        const maxAbs = d3.max(geo.features, d => Math.abs(d.__d || 0)) || 1;
+        const colorB = d3.scaleDiverging([-maxAbs, 0, maxAbs], d3.interpolateRdBu);
+        legend("#legendB", colorB, 7, d => d3.format("+.2s")(d), "loss", "gain", true);
+
+        svgB.append("g").selectAll("path").data(geo.features).join("path")
+          .attr("class","town").attr("d", path)
+          .attr("fill", d => isFinite(d.__d) ? colorB(d.__d) : "#555")
+          .on("mouseenter", function(){ d3.select(this).classed("hovered",true).raise(); })
+          .on("mouseleave", function(){ d3.select(this).classed("hovered",false); })
+          .append("title").text(d => `${d.__town}\nChange from 1980 to 2010: ${isFinite(d.__d)? d3.format("+,")(d.__d) : "N/A"}`);
+
+
+        
+        // Map C: Gini Index by County
+
+        const csvByFips = new Map();
+        const csvByName = new Map();
+        for (const r of giniRows) {
+          const fipsFromId = (r.id && /(\n?\d{5})$/.test(r.id)) ? r.id.match(/(\d{5})$/)[1] : "";
+          const fips = String(
+            r.fips_code ?? r.fips ?? r.FIPS ?? fipsFromId ?? ""
+          ).padStart(5, "0");
+
+          const rawName = r.county ?? r.County ?? r["Geographic Area Name"] ?? "";
+          const countyName = String(rawName).replace(/,\s*Massachusetts$/i, "");
+          const cname = normCountyName(countyName);
+
+          const year = +(r.year ?? r.Year);
+          const gini = +(
+            r.gini ?? r.Gini ?? r["Estimate!!Gini Index"] ?? r.gini_index ?? r.GINI
+          );
+
+          if (!Number.isFinite(year) || !Number.isFinite(gini)) continue;
+
+          if (fips && fips !== "00000") {
+            if (!csvByFips.has(fips)) csvByFips.set(fips, []);
+            csvByFips.get(fips).push({ year, gini });
+          }
+          if (cname) {
+            if (!csvByName.has(cname)) csvByName.set(cname, []);
+            csvByName.get(cname).push({ year, gini });
+          }
+        }
+
+        // Debug logs
+
+        console.log("CSV counties parsed by FIPS:", csvByFips.size);
+        console.log("CSV counties parsed by NAME:", csvByName.size);
+        console.log("Example Norfolk 25021:", csvByFips.get("25021"));
+
+        function reduceSeries(arr){
+          const series = arr.slice().sort((a,b)=>a.year-b.year);
+          const y2019 = series.find(d=>d.year===2019)?.gini;
+          const gTarget = Number.isFinite(y2019) ? y2019 : (series.length ? series[series.length-1].gini : undefined);
+          return { series, gTarget };
+        }
+
+        geo.features.forEach(f => {
+          const p = f.properties || {};
+          const kF = pickKey(p, FIELD_NAMES.countyFips);
+          const fips = kF ? String(p[kF]).padStart(5, "0") : "";
+
+          let rec, label;
+          if (fips && csvByFips.has(fips)) {
+            rec = reduceSeries(csvByFips.get(fips));
+            label = COUNTY_FROM_FIPS.get(fips) || "Unknown County";
+          } else {
+            const cKey = pickKey(p, ["COUNTY","COUNTY_NAME","COUNTYNAME","CNTY","COUNTYNAM"]);
+            const cnameRaw = cKey ? p[cKey] : "";
+            const cname = normCountyName(cnameRaw);
+            if (cname && csvByName.has(cname)) {
+              rec = reduceSeries(csvByName.get(cname));
+              const fromList = [...COUNTY_FROM_FIPS.values()].find(v => normCountyName(v)===cname);
+              label = fromList || (cnameRaw || "Unknown County");
+            } else {
+              rec = {series:[], gTarget:undefined};
+              label = "Unknown County";
+            }
+          }
+          f.__countyLabel = label;
+          f.__gSeries = rec.series;
+          f.__gVal = rec.gTarget;
+        });
+
+        // Create Map C with tooltips and legend for Gini index by county (hue)
+
+        const gVals = geo.features.map(d => d.__gVal).filter(Number.isFinite);
+        const gDom = gVals.length ? d3.extent(gVals) : [0.35, 0.55];
+        const colorC = d3.scaleSequential(gDom, t => d3.hcl(360*t, 60, 60));
+        legend("#legendC", colorC, 7, d => d3.format(".2f")(d), "lower inequality", "higher");
+
+        const svgC = d3.select("#svgC");
+        svgC.append("g").selectAll("path").data(geo.features).join("path")
+          .attr("class","town").attr("d", path)
+          .attr("fill", d => Number.isFinite(d.__gVal) ? colorC(d.__gVal) : "#444")
+          .on("mouseenter", (e,d) => showTooltip(e, d.__countyLabel, d.__gSeries, d.__gVal))
+          .on("mousemove", moveTooltip)
+          .on("mouseleave", hideTooltip);
+
+        try{
+          const mesh = topojson.mesh(topology, topology.objects[objName], (a,b) => {
+            const ak = pickKey(a.properties, FIELD_NAMES.countyFips);
+            const bk = pickKey(b.properties, FIELD_NAMES.countyFips);
+            return String(a.properties[ak]) !== String(b.properties[bk]);
+          });
+          svgC.append("path")
+            .attr("d", d3.geoPath(proj)(mesh))
+            .attr("fill","none").attr("stroke","#0a0c14").attr("stroke-width","1.2px")
+            .attr("pointer-events","none");
+        }catch(e){ console.warn("County mesh skipped:", e); }
+
+
+        /*----------------------------------------------------*/
+        /*--------------------- Tooltip ----------------------*/
+        /*----------------------------------------------------*/
+
+        const tip = d3.select("#tooltip");
+        const tipChart = d3.select("#tChart");
+
+        function showTooltip(event, county, series, gVal){
+          d3.select("#tCounty").text(county);
+          d3.select("#tMeta").text(Number.isFinite(gVal) ? `Gini (2019/latest): ${d3.format(".3f")(gVal)}` : "Gini (2019/latest): N/A");
+
+          tipChart.selectAll("*").remove();
+          const W=280,H=120,m={t:10,r:10,b:20,l:28};
+          const g = tipChart.append("g").attr("transform",`translate(${m.l},${m.t})`);
+          const iw=W-m.l-m.r, ih=H-m.t-m.b;
+
+            // Draw time series or message
+
+          if (series.length>=2){
+            const x = d3.scaleLinear().domain(d3.extent(series,d=>d.year)).range([0,iw]);
+            const y = d3.scaleLinear().domain(d3.extent(series,d=>d.gini)).nice().range([ih,0]);
+            const line = d3.line().x(d=>x(d.year)).y(d=>y(d.gini));
+            g.append("path").datum(series).attr("fill","none").attr("stroke","#9ad2ff").attr("stroke-width",2).attr("d",line);
+            g.append("g").attr("transform",`translate(0,${ih})`)
+              .call(d3.axisBottom(x).ticks(4).tickFormat(d3.format("d")))
+              .call(s=>s.selectAll("text").attr("fill","#9aa4b2"))
+              .call(s=>s.selectAll("path,line").attr("stroke","#2a2f43"));
+            g.append("g")
+              .call(d3.axisLeft(y).ticks(4))
+              .call(s=>s.selectAll("text").attr("fill","#9aa4b2"))
+              .call(s=>s.selectAll("path,line").attr("stroke","#2a2f43"));
+          } else if (series.length===1){
+            const x = d3.scaleLinear().domain([series[0].year-1, series[0].year+1]).range([0, iw]);
+            const y = d3.scaleLinear().domain([series[0].gini-0.02, series[0].gini+0.02]).range([ih, 0]);
+            g.append("circle").attr("cx", x(series[0].year)).attr("cy", y(series[0].gini)).attr("r", 3).attr("fill", "#9ad2ff");
+            g.append("text").attr("x", x(series[0].year)+6).attr("y", y(series[0].gini)-6).attr("fill", "#9aa4b2").text(`${series[0].year}: ${series[0].gini.toFixed(3)}`);
+          } else {
+            g.append("text").attr("x",6).attr("y",16).attr("fill","#9aa4b2").text("No time series available");
+          }
+
+          tip.style("display","block");
+          moveTooltip(event);
+        }
+
+        // Move tooltip with mouse
+
+        function moveTooltip(event){
+          const pad=12;
+          tip.style("left",(event.clientX+pad)+"px").style("top",(event.clientY+pad)+"px");
+        }
+        function hideTooltip(){ tip.style("display","none"); }
+      })
+
+      // Handle data load errors
+
+      .catch(err => {
+        console.error(err);
+        d3.select(".container").insert("p",":first-child")
+          .style("color","salmon").text("Failed to load data. Check paths to data/towns.topojson and data/gini_index.csv");
+      });
+  </script>
+</body>
+</html>
